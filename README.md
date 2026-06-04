@@ -1,4 +1,6 @@
-**[English](https://github.com/abcnull/python-ui-auto-test/blob/master/README_en.md) | [博客](https://blog.csdn.net/abcnull/article/details/103379143)**
+| **[English](https://github.com/abcnull/python-ui-auto-test/blob/master/README_en.md) | [博客](https://blog.csdn.net/abcnull/article/details/103379143)** |
+| --- |
+| ![CI](https://github.com/mojo5-ai/python-ui-auto-test/actions/workflows/ci.yml/badge.svg) |
 
 [TOC]
 # python-ui-auto-test
@@ -318,7 +320,65 @@ pytest 风格写法的示例在 `case/test_pytest_style_demo.py`,展示了 fixtu
 1. 把路径定位全改成 `pathlib` 写法
 2. 升级到 Selenium 4 风格(`By.XPATH` + `options=...`)
 3. 把 `mysql_tool.py` 加 `with` 上下文管理(目前 `release_mysql_conn` 不会自动调用)
-4. ~~加 `pytest` 兼容层,逐步替换 `unittest`~~ → **已完成 (commit `XXXXX`)**:新增 `pytest.ini` + `conftest.py` + `suite/run_pytest.py` + `case/test_pytest_style_demo.py`,现有 unittest case 不用改一行就能用 pytest 跑
+4. ~~加 `pytest` 兼容层,逐步替换 `unittest`~~ → **已完成 (commit `c73d285`)**:新增 `pytest.ini` + `conftest.py` + `suite/run_pytest.py` + `case/test_pytest_style_demo.py`,现有 unittest case 不用改一行就能用 pytest 跑
+5. ~~加 GitHub Actions CI~~ → **已完成 (commit `ca38527` / `033fb4c`)**:见下文"持续集成 (CI)"章节
+
+---
+
+## 持续集成 (CI)
+
+`.github/workflows/ci.yml` 配了 3 个 job:
+
+| Job | 触发 | 内容 | 耗时 |
+|---|---|---|---|
+| `test` | push / PR 到 dev/master/main | 装依赖 → 跑 pytest demo → import 烟雾测试 → pyflakes → 校验 ini | ~30s |
+| `full-test` | 手动 `workflow_dispatch` | 装 Chrome + 跑 pytest demo 在 2 个 Python 版本上 | ~2min |
+| `nightly` | 每周日 02:00 UTC 自动 | 跟 `test` 一样,加 HTML 报告上传 | ~30s |
+
+### 为什么 CI 不实际跑 UI 用例?
+
+`test_baidu_case.py` 等 unittest 风格 case 启动浏览器需要:
+- 项目代码硬编码 `chromedriver.exe` 路径(只 Windows)
+- `assembler.assembler_driver()` 会真去 `webdriver.Chrome(...)` 启动
+
+Linux runner 上没有 `.exe`、Chromedriver 版本还要跟 Chrome 对齐,装起来慢且脆。
+**所以 CI 只跑"不需要浏览器"的部分**(pytest demo + import 烟雾测试)来抓**代码 / 语法 / 依赖**问题。
+
+要跑真 UI 用例请本地:
+```bash
+python suite/run_all.py    # 单线程 + BeautifulReport
+python suite/run_all_mutithread.py    # 多线程(3 线程)
+```
+
+### 怎么把 CI 跑起来?
+
+文件已就位,**自动生效**。push 到 dev 分支后:
+
+👉 https://github.com/mojo5-ai/python-ui-auto-test/actions
+
+你会看到 `test` job 自动触发。如果它失败,点进去看哪个 step 红了。
+
+**CI 当前状态**:`Smoke + import checks` job 在最近一次 push (commit `033fb4c`) 已 ✅ 通过(13 个 step 全绿)。
+
+### 调试时遇到的坑(供参考)
+
+调试 CI 期间遇到过 3 个反直觉的失败,记录一下:
+
+1. **GitHub Actions 日志输出过长会触发 "exit code 1" 假象**。一个 step 的输出如果超 ~50KB(每行 2000 字符),runner 会把 step 标为 failed。解决:管道末尾加 `| head -50` 截断。
+2. **`working-directory` 行为**:CI 上 `working-directory: ui-test` 应该跟本地一样工作,但为了更透明,改用 `pushd ui-test` 显式切换。
+3. **YAML 双引号 + Python f-string + 中文**:在 `python -c "..."` 里混用 f-string 和中文字符,YAML 解析容易出问题。改用字符串拼接更稳。
+
+### 想跑全量(含 UI)?
+
+去 Actions 页面 → 选 "CI" workflow → "Run workflow" → 选 dev 分支 → 点 "Run workflow" 按钮,触发 `full-test` job。
+
+### 改 CODEOWNERS
+
+`.github/CODEOWNERS` 现在指向 `@your-github-username`(占位),改成你的 GitHub username 后,PR 会自动指派给你 review。
+
+### 加 PR 模板
+
+`.github/pull_request_template.md` 让每次开 PR 时自动出现 checklist,提醒你"跑过哪些测试"。
 
 ---
 
