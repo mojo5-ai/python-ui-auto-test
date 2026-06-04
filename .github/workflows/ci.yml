@@ -65,12 +65,18 @@ jobs:
       - name: Pytest smoke tests (no browser needed)
         working-directory: ui-test
         run: |
-          # 跑不需要浏览器的 demo 用例,验证:
-          #   - pythonpath 配对了
-          #   - ConfigReader 能读 ini
-          #   - marker 系统工作
-          #   - 各种 fixture 能正常解析
-          pytest case/test_pytest_style_demo.py -v --tb=short
+          set -euo pipefail
+          echo "=== Environment diagnostics ==="
+          echo "PATH: $PATH"
+          echo "PWD: $(pwd)"
+          echo "Python: $(python --version 2>&1)"
+          echo "pytest package: $(pip show pytest 2>&1 | head -3)"
+          echo "--- attempt 1: pytest as command ---"
+          pytest --version || echo "pytest command FAILED with exit $?"
+          echo "--- attempt 2: python -m pytest ---"
+          python -m pytest --version
+          echo "=== Running tests ==="
+          python -m pytest case/test_pytest_style_demo.py -v --tb=short
 
       - name: Import smoke test (catch syntax/import errors)
         working-directory: ui-test
