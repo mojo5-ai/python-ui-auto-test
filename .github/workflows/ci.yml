@@ -62,10 +62,19 @@ jobs:
           # pytest 生态
           pip install pytest pytest-html pytest-xdist pytest-timeout
 
-      - name: Pytest smoke tests (no browser needed)
+      - name: Show installed packages
         working-directory: ui-test
-        # 用一行命令避免 bash 多行解析问题
-        run: python -m pytest case/test_pytest_style_demo.py -v --tb=short --color=no
+        run: pip list | grep -E "^(pytest|selenium|BeautifulReport|paramunittest|tomorrow|pymysql|redis)\b" || true
+
+      - name: Pytest smoke tests (no browser needed)
+        # 不用 working-directory,直接用 pushd 切
+        run: |
+          pwd
+          ls
+          pushd ui-test
+          pwd
+          ls
+          python -m pytest case/test_pytest_style_demo.py -v --tb=short --color=no
 
       - name: Import smoke test (catch syntax/import errors)
         working-directory: ui-test
