@@ -7,6 +7,7 @@
 # @GitHub : abcnull
 
 import os
+import threading
 from BeautifulReport import BeautifulReport
 from util.config_reader import ConfigReader
 from util.text_tool import TextTool
@@ -14,6 +15,10 @@ from util.text_tool import TextTool
 
 # BeautifulReport 报告产生器，可控制文件是否支持覆盖
 class ReportTool:
+    # 进程级锁 — BeautifulReport 内部不线程安全，
+    # 多个线程同时调 .report() 会导致 HTML 报告的 <div class="test-list"> 追加错乱
+    _report_lock = threading.Lock()
+
     # 构造器
     def __init__(self, suites):
         """
@@ -37,11 +42,32 @@ class ReportTool:
         TextTool().project_start()
         # 获取新的报告名
         new_filename = self.get_html_name(filename, report_dir)
-        # 运行测试并产出报告存放 self.get_html_name(filename, report_dir)
-        BeautifulReport(self.suites).report(filename=new_filename, description=description, report_dir=report_dir,
-                                            theme=theme)
+        # 线程安全地运行测试并产出报告
+        self._thread_safe_report(
+            filename=new_filename,
+            description=description,
+            report_dir=report_dir,
+            log_path=log_path,
+            theme=theme,
+        )
         # 由于可配置是否允许报告被覆盖，这里返回的是报告新名字
         return new_filename
+
+    # 线程安全的报告生成（在 BeautifulReport.report() 外层加锁）
+    # 注意：这只保护"生成报告时的 HTML 写入"不互相覆盖，
+    # 测试套件本身的执行仍是并行的（每个线程跑自己的 Assembler/driver）
+    def _thread_safe_report(self, filename, description, report_dir, log_path, theme):
+        """
+        加锁的 BeautifulReport.report() 调用
+        """
+        with self._report_lock:
+            BeautifulReport(self.suites).report(
+                filename=filename,
+                description=description,
+                report_dir=report_dir,
+                log_path=log_path,
+                theme=theme,
+            )
 
     # 递归方法
     # 判断报告的名字在配置文件指定路径下是否有重复，并根据配置是否允许重复返回报告新的名字
