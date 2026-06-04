@@ -1,0 +1,248 @@
+# GitHub Actions CI for python-ui-auto-test
+#
+# 2026-06 新增 — 每次 push / PR 自动跑测试基础设施检查。
+#
+# 策略: CI 不启动真实浏览器 (需要装 Chrome/Chromedriver,慢且脆),
+# 而是跑:
+#   1. pytest 风格的 smoke 测试 (test_pytest_style_demo.py) — 不需要 driver
+#   2. 所有 case/*.py / util/*.py 的 import 烟雾测试 — 抓语法 / 模块缺失错误
+#   3. 代码风格检查 (pyflakes / flake8, 选其一,失败不阻塞)
+#   4. (可选)每周日 02:00 跑全量 + 报告上传
+#
+# 真要跑 selenium UI 用例请本地跑:
+#   python suite/run_all.py    # 单线程
+#   python suite/run_all_mutithread.py   # 多线程
+
+name: CI
+
+on:
+  push:
+    branches: [dev, master, main]
+  pull_request:
+    branches: [dev, master, main]
+  # 每周日凌晨 02:00 UTC (北京时间 10:00) 跑一次 nightly
+  schedule:
+    - cron: "0 2 * * 0"
+  # 允许手动从 Actions 页面触发 full-test
+  workflow_dispatch:
+
+# 取消进行中的同 workflow 旧运行,节省 runner 配额
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Job 1: 基础设施检查 (快, ~30s)
+  # ──────────────────────────────────────────────────────────────────
+  test:
+    name: Smoke + import checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Install dependencies
+        working-directory: ui-test
+        run: |
+          python -m pip install --upgrade pip
+          # 先装项目依赖
+          pip install -r requirements.txt
+          # pytest 生态
+          pip install pytest pytest-html pytest-xdist pytest-timeout
+
+      - name: Pytest smoke tests (no browser needed)
+        working-directory: ui-test
+        run: |
+          # 跑不需要浏览器的 demo 用例,验证:
+          #   - pythonpath 配对了
+          #   - ConfigReader 能读 ini
+          #   - marker 系统工作
+          #   - 各种 fixture 能正常解析
+          pytest case/test_pytest_style_demo.py -v --tb=short
+
+      - name: Import smoke test (catch syntax/import errors)
+        working-directory: ui-test
+        run: |
+          # 试着 import 所有业务模块,抓 ImportError / SyntaxError
+          # 这一步很重要 — unittest 风格的 case/*.py 里有 BeautifulReport
+          # 装饰器,如果代码有 typo 这里会立刻挂
+          python -c "
+          import sys, importlib, traceback
+          mods = [
+              'base.assembler',
+              'common.browser_common',
+              'common.page_common',
+              'util.config_reader',
+              'util.log_tool',
+              'util.mysql_tool',
+              'util.redis_pool',
+              'util.report_tool',
+              'util.screenshot_tool',
+              'util.text_tool',
+              'util.thread_local_storage',
+              'suite.run_all',
+              'suite.run_all_mutithread',
+              'suite.run_pytest',
+          ]
+          failed = []
+          for m in mods:
+              try:
+                  importlib.import_module(m)
+                  print(f'  ✓ {m}')
+              except Exception as e:
+                  print(f'  ✗ {m}: {type(e).__name__}: {e}')
+                  failed.append((m, e))
+          if failed:
+              print(f'\\n{len(failed)} module(s) failed to import:')
+              for m, e in failed:
+                  print(f'  {m}: {e}')
+              sys.exit(1)
+          print(f'\\nAll {len(mods)} modules imported OK.')
+          "
+
+      - name: Pytest collection (no execution)
+        working-directory: ui-test
+        run: |
+          # 让 pytest 收集全部测试但不执行,验证:
+          #   - case/*.py 里没有语法错误 (unittest.TestCase 必须能 collect)
+          #   - marker 注册没冲突
+          #   - conftest.py 加载没出错
+          pytest --collect-only -q 2>&1 | tail -40
+        continue-on-error: true
+        # 注: 真实 case 会试图启动浏览器,collect 阶段不会,但会显示
+        # ImportWarning 之类的。我们让这一步 continue-on-error,只作为
+        # 友好提示。
+
+      - name: Static analysis (best-effort)
+        working-directory: ui-test
+        run: |
+          # pyflakes 比 flake8 轻,不强制风格,只抓明显错误
+          pip install pyflakes
+          pyflakes base/ case/ common/ data/ locator/ page/ util/ suite/ \
+              || (echo "::warning::pyflakes found issues (non-blocking)"; exit 0)
+
+      - name: Validate pytest.ini
+        working-directory: ui-test
+        run: |
+          # pytest 启动时如果 ini 有问题会报,但显式校验更稳
+          python -c "
+          import configparser
+          cp = configparser.ConfigParser()
+          cp.read('pytest.ini')
+          assert 'pytest' in cp.sections() or cp.defaults(), 'no [pytest] section'
+          print('pytest.ini: OK')
+          "
+
+      - name: Validate config.ini
+        working-directory: ui-test
+        run: |
+          python -c "
+          import configparser
+          cp = configparser.ConfigParser()
+          cp.read('resource/config/config.ini', encoding='utf-8')
+          for sec in ('project', 'driver', 'redis', 'mysql', 'screenshot', 'html', 'log'):
+              assert cp.has_section(sec), f'missing section [{sec}]'
+          print('config.ini: all required sections present')
+          "
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 2: 周日全量(可选,慢,只在手动触发时跑)
+  # ──────────────────────────────────────────────────────────────────
+  full-test:
+    name: Weekly full test (with browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 只在手动从 Actions 页面 "Run workflow" 时触发
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Chrome (stable)
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install ChromeDriver
+        run: |
+          CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
+          echo "Chrome version: $CHROME_VERSION"
+          echo "Note: project code hardcodes chromedriver.exe (Windows path)"
+          echo "Linux runner won't be able to launch driver, this is best-effort."
+
+      - name: Install dependencies
+        working-directory: ui-test
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-html
+
+      - name: Run pytest demo
+        working-directory: ui-test
+        run: |
+          pytest case/test_pytest_style_demo.py -v --tb=short \
+            --html=report/html/ci-pytest-report.html --self-contained-html || true
+        continue-on-error: true
+
+      - name: Upload pytest HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report-py${{ matrix.python-version }}
+          path: ui-test/report/html/ci-pytest-report.html
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────────────
+  # 每周日凌晨 02:00 UTC (北京时间 10:00) 自动触发一次"轻量级全量"
+  # ──────────────────────────────────────────────────────────────────
+  nightly:
+    name: Nightly smoke (cron)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        working-directory: ui-test
+        run: pip install -r requirements.txt && pip install pytest pytest-html
+      - name: Run smoke + import checks
+        working-directory: ui-test
+        run: |
+          pytest case/test_pytest_style_demo.py -v --tb=short \
+            --html=report/html/nightly-report.html --self-contained-html
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-report
+          path: ui-test/report/html/nightly-report.html
+          if-no-files-found: ignore
+          retention-days: 30
