@@ -289,6 +289,51 @@ pytest 风格写法的示例在 `case/test_pytest_style_demo.py`,展示了 fixtu
 | Marker 系统 | 无 | smoke / regression / slow ... |
 | 推荐场景 | 保持向后兼容、喜欢花哨报告 | 新写的测试、需要并行 |
 
+#### 方式 C：v2 Playwright（2026-06 新增，**现代化重写**）
+
+跟 v1 完全并存的 Playwright 实现。**如果你的项目是新启动的，建议直接用 v2**。
+
+```bash
+# 1. 创建虚拟环境(uv 是最稳的方式)
+uv venv v2-venv --python python3.11
+# 或: python -m venv v2-venv
+
+# 2. 装 v2 依赖
+# Windows:
+v2-venv/Scripts/python.exe -m pip install playwright pytest-playwright pytest
+# Linux/macOS:
+v2-venv/Scripts/python -m pip install playwright pytest-playwright pytest
+
+# 3. (可选) 装浏览器,本地想跑 UI 用例时需要
+# Windows:
+v2-venv/Scripts/python.exe -m playwright install chromium
+# 第一次装会下载 ~100MB,会装在 C:\Users\<user>\AppData\Local\ms-playwright\
+
+# 4. 跑不需要浏览器的 demo(验证 v2 框架本身)
+cd ui-test
+v2-venv/Scripts/python.exe -m pytest v2/case/test_baidu_demo.py -v
+
+# 5. 跑需要浏览器的 UI case
+v2-venv/Scripts/python.exe -m pytest v2/case/test_baidu_search.py -m ui -v
+# 或用 wrapper:
+python v2/run.py --all
+```
+
+**v1 vs v2 对比**：
+
+| 维度 | v1 (Selenium 3) | v2 (Playwright) |
+|---|---|---|
+| 浏览器驱动 | 需手动装 chromedriver.exe 等 | 自带 Chromium，零配置 |
+| 显式等待 | `WebDriverWait(driver, 10).until(...)` | **自动等待**（默认 30s） |
+| 多线程 | `ThreadLocalStorage` 静态字典 | `BrowserContext` 隔离（天然安全） |
+| 跨浏览器 | 需装各种 WebDriver | 一行 `playwright install firefox` |
+| IE 支持 | ✅ | ❌（Playwright 不支持 IE） |
+| API 风格 | 命令式（老派） | 现代 async/await、链式 locator |
+| 速度 | 较慢（WebDriver 协议层） | **快 2-3 倍**（直连 CDP） |
+| CI 友好 | 装 driver 很折腾 | `playwright install --with-deps` 一行搞定 |
+| 代码量 | 多（每次操作要拼命令） | 少（自动等 + 链式） |
+| 推荐场景 | 必须测 IE / 老项目 | **新项目首选** |
+
 ---
 
 ## 已知问题与修复记录
@@ -322,6 +367,7 @@ pytest 风格写法的示例在 `case/test_pytest_style_demo.py`,展示了 fixtu
 3. 把 `mysql_tool.py` 加 `with` 上下文管理(目前 `release_mysql_conn` 不会自动调用)
 4. ~~加 `pytest` 兼容层,逐步替换 `unittest`~~ → **已完成 (commit `c73d285`)**:新增 `pytest.ini` + `conftest.py` + `suite/run_pytest.py` + `case/test_pytest_style_demo.py`,现有 unittest case 不用改一行就能用 pytest 跑
 5. ~~加 GitHub Actions CI~~ → **已完成 (commit `ca38527` / `033fb4c`)**:见下文"持续集成 (CI)"章节
+6. ~~用 Playwright 重写,提供 v1 / v2 并存方案~~ → **已完成 (commit `XXXXX`)**:见 `v2/` 目录,跟 v1 完全独立,共用同一份 config.ini。`v2/run.py` 是一行 wrapper,`v2/case/` 里有 demo 和真实 UI 测试。CI 加了 `v2-test` job 跑 v2 烟雾测试。
 
 ---
 

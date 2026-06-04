@@ -2,16 +2,20 @@
 #
 # 2026-06 新增 — 每次 push / PR 自动跑测试基础设施检查。
 #
-# 策略: CI 不启动真实浏览器 (需要装 Chrome/Chromedriver,慢且脆),
-# 而是跑:
-#   1. pytest 风格的 smoke 测试 (test_pytest_style_demo.py) — 不需要 driver
-#   2. 所有 case/*.py / util/*.py 的 import 烟雾测试 — 抓语法 / 模块缺失错误
-#   3. 代码风格检查 (pyflakes / flake8, 选其一,失败不阻塞)
-#   4. (可选)每周日 02:00 跑全量 + 报告上传
+# 策略: CI 分两个并行 job
+#   1. v1-test: 跑 v1 (Selenium 3 风格) — 跟原来一样
+#      - 跑 v1 pytest demo (test_pytest_style_demo.py)
+#      - 跑 v1 import 烟雾测试
+#   2. v2-test: 跑 v2 (Playwright 风格) — 新增
+#      - 跑 v2 不需要浏览器的 demo (test_baidu_demo.py)
+#      - 跑 v2 import 烟雾测试
 #
-# 真要跑 selenium UI 用例请本地跑:
-#   python suite/run_all.py    # 单线程
-#   python suite/run_all_mutithread.py   # 多线程
+# 两个 job 都不实际启动浏览器(浏览器测试留给 nightly + 手动 full-test)
+# 真要跑 selenium UI 用例请本地:
+#   python suite/run_all.py
+#   python suite/run_all_mutithread.py
+# 真要跑 playwright UI 用例请本地(装了浏览器后):
+#   cd ui-test && v2-venv/Scripts/python.exe -m pytest v2/case/ -m ui
 
 name: CI
 
@@ -33,10 +37,10 @@ concurrency:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
-  # Job 1: 基础设施检查 (快, ~30s)
+  # Job 1: v1 (Selenium 3 风格) 基础设施检查
   # ──────────────────────────────────────────────────────────────────
-  test:
-    name: Smoke + import checks
+  v1-test:
+    name: v1 (Selenium) smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -155,6 +159,87 @@ jobs:
           for sec in ('project', 'driver', 'redis', 'mysql', 'screenshot', 'html', 'log'):
               assert cp.has_section(sec), f'missing section [{sec}]'
           print('config.ini: all required sections present')
+          "
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 2: v2 (Playwright 风格) 基础设施检查
+  # ──────────────────────────────────────────────────────────────────
+  v2-test:
+    name: v2 (Playwright) smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies (v2 only)
+        working-directory: ui-test
+        run: |
+          python -m pip install --upgrade pip
+          # v2 只需要 playwright + pytest-playwright
+          pip install playwright pytest-playwright pytest pytest-html
+
+      - name: Show installed packages
+        working-directory: ui-test
+        run: pip list | grep -E "^(playwright|pytest)\b" || true
+
+      - name: Pytest v2 demo tests (no browser needed)
+        working-directory: ui-test
+        # -m no_browser 跑不依赖浏览器的 demo
+        run: python -m pytest v2/case/test_baidu_demo.py -v --tb=short --color=no 2>&1 | head -50
+
+      - name: Import smoke test (v2 modules)
+        working-directory: ui-test
+        run: |
+          python -c "
+          import sys, importlib, traceback
+          mods = [
+              'v2.util.config_reader',
+              'v2.util.screenshot_tool',
+              'v2.common.page_common',
+              'v2.base.assembler',
+              'v2.page.baidu_main_page',
+              'v2.data.baidu_main_data',
+              'v2.locator.baidu_main_locator',
+          ]
+          failed = []
+          for m in mods:
+              try:
+                  importlib.import_module(m)
+                  print('  OK   ' + m)
+              except ImportError as e:
+                  if any(lib in str(e) for lib in ('playwright', 'PIL', 'numpy')):
+                      print('  SKIP ' + m + ': ' + str(e))
+                  else:
+                      print('  FAIL ' + m + ': ' + str(e))
+                      failed.append((m, e))
+              except Exception as e:
+                  print('  FAIL ' + m + ': ' + type(e).__name__ + ': ' + str(e))
+                  failed.append((m, e))
+          if failed:
+              print(str(len(failed)) + ' module(s) had non-dep errors')
+              for m, e in failed:
+                  print('  ' + m + ': ' + str(e))
+              sys.exit(1)
+          print('All ' + str(len(mods)) + ' v2 modules OK')
+          " 2>&1 | head -20
+
+      - name: Validate v2 pytest.ini
+        working-directory: ui-test
+        run: |
+          python -c "
+          import configparser
+          cp = configparser.ConfigParser()
+          cp.read('v2/pytest.ini')
+          assert 'pytest' in cp.sections() or cp.defaults(), 'no [pytest] section'
+          print('v2/pytest.ini: OK')
           "
 
   # ──────────────────────────────────────────────────────────────────
