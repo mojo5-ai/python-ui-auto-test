@@ -64,19 +64,8 @@ jobs:
 
       - name: Pytest smoke tests (no browser needed)
         working-directory: ui-test
-        run: |
-          set -euo pipefail
-          echo "=== Environment diagnostics ==="
-          echo "PATH: $PATH"
-          echo "PWD: $(pwd)"
-          echo "Python: $(python --version 2>&1)"
-          echo "pytest package: $(pip show pytest 2>&1 | head -3)"
-          echo "--- attempt 1: pytest as command ---"
-          pytest --version || echo "pytest command FAILED with exit $?"
-          echo "--- attempt 2: python -m pytest ---"
-          python -m pytest --version
-          echo "=== Running tests ==="
-          python -m pytest case/test_pytest_style_demo.py -v --tb=short
+        # 用一行命令避免 bash 多行解析问题
+        run: python -m pytest case/test_pytest_style_demo.py -v --tb=short --color=no
 
       - name: Import smoke test (catch syntax/import errors)
         working-directory: ui-test
