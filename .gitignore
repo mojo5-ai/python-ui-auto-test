@@ -3,3 +3,8 @@
 
 # 虚拟环境文件夹
 venv/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

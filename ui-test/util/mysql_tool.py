@@ -28,7 +28,7 @@ class MysqlTool:
         # mysql_charset
         self.charset = ConfigReader().read("mysql")["mysql_charset"]
         # mysql 连接
-        self.mysql_conn = pymysql.connect(host=self.host, user=self.user, passwd=self.passwd, db=self.db,
+        self.mysql_conn = pymysql.connect(host=self.host, user=self.user, password=self.passwd, db=self.db,
                                           port=self.port, charset=self.charset)
 
     # execute 任何操作

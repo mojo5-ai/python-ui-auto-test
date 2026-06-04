@@ -25,7 +25,6 @@ class TestCsdnCase(unittest.TestCase):
         self.env = env
 
     # 放在各个测试方法中首行执行
-    @classmethod
     def before_setUp(self):
         # 开始的 log 信息
         start_info()
@@ -36,7 +35,6 @@ class TestCsdnCase(unittest.TestCase):
         self.csdn_page = CsdnPage(self.driver)
 
     # 放在各个测试方法中末行执行
-    @classmethod
     def after_tearDown(self):
         # 结束的 log 信息
         end_info()
