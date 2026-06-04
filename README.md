@@ -230,12 +230,14 @@ pip install -r requirements.txt
 
 ### 5. 运行
 
+#### 方式 A：unittest + BeautifulReport（项目原有）
+
 ```bash
-# 单线程跑全部用例
 cd ui-test
+# 单线程跑全部用例
 python suite/run_all.py
 
-# 多线程(3 线程,实验性,报告会被覆盖)
+# 多线程（3 线程，报告互不覆盖）
 python suite/run_all_mutithread.py
 
 # 单独跑一个用例模块
@@ -244,6 +246,46 @@ python case/test_baidu_case.py
 
 报告输出在 `ui-test/report/html/UI测试报告.html`,日志在 `ui-test/report/log/`,
 截图在 `ui-test/report/img/`(失败时自动截图)。
+
+#### 方式 B：pytest（2026-06 新增，推荐用于新写的测试）
+
+项目根加了 `pytest.ini` + `conftest.py`,现有 unittest 风格 case **不用改一行**就能用 pytest 跑：
+
+```bash
+cd ui-test
+pip install pytest pytest-html pytest-xdist pytest-timeout   # 已经写在 requirements.txt 里
+
+# 跑全部
+python suite/run_pytest.py
+# 等价于：pytest case/ -v
+
+# 只跑 smoke 标记的
+python suite/run_pytest.py -m smoke
+
+# 跑名字含 baidu 的
+python suite/run_pytest.py -k baidu
+
+# 出 pytest-html 报告（独立 HTML，不依赖 BeautifulReport）
+python suite/run_pytest.py --html=report/html/pytest-report.html --self-contained-html
+
+# 并行跑（用 pytest-xdist 替代 tomorrow 方案，4 个 worker）
+python suite/run_pytest.py -n 4
+```
+
+pytest 风格写法的示例在 `case/test_pytest_style_demo.py`,展示了 fixture、parametrize、marker、skip、xfail 怎么用。
+
+**两个运行方式的对比**：
+
+| 维度 | unittest + BeautifulReport | pytest |
+|---|---|---|
+| 改动现有 case | 无 | 无 |
+| 并行能力 | tomorrow 装饰器（项目自己实现） | pytest-xdist（-n 4 一行搞定） |
+| HTML 报告 | BeautifulReport（花哨） | pytest-html（简洁） |
+| 参数化 | paramunittest | @pytest.mark.parametrize |
+| Fixture | setUp/tearDown | @pytest.fixture（更强大） |
+| 跳过/xfail | @unittest.skip 等 | @pytest.mark.skip / xfail |
+| Marker 系统 | 无 | smoke / regression / slow ... |
+| 推荐场景 | 保持向后兼容、喜欢花哨报告 | 新写的测试、需要并行 |
 
 ---
 
@@ -276,7 +318,7 @@ python case/test_baidu_case.py
 1. 把路径定位全改成 `pathlib` 写法
 2. 升级到 Selenium 4 风格(`By.XPATH` + `options=...`)
 3. 把 `mysql_tool.py` 加 `with` 上下文管理(目前 `release_mysql_conn` 不会自动调用)
-4. 加 `pytest` 兼容层,逐步替换 `unittest`
+4. ~~加 `pytest` 兼容层,逐步替换 `unittest`~~ → **已完成 (commit `XXXXX`)**:新增 `pytest.ini` + `conftest.py` + `suite/run_pytest.py` + `case/test_pytest_style_demo.py`,现有 unittest case 不用改一行就能用 pytest 跑
 
 ---
 
