@@ -188,6 +188,98 @@ Scratches and Consoles
 
   ![工具类](https://github.com/abcnull/Image-Resources/blob/master/python-ui-auto-test/1575369333647.png)
 
+## 如何跑起来 (Quick Start)
+
+> 2026-06 更新 — 把作者原 README 没写明的运行步骤补全。
+
+### 1. 准备环境
+
+- Python 3.7+(项目用 3.11 验证)
+- Windows / macOS / Linux 都可
+- 至少一个浏览器及其对应 WebDriver(默认 `config.ini` 里配的是 `chrome`)
+
+### 2. 安装依赖
+
+```bash
+cd ui-test
+pip install -r requirements.txt
+```
+
+`requirements.txt` 里把 `selenium` 锁在了 `<4.0.0`,因为项目代码用的是 Selenium 3 的 API
+(`find_element_by_xpath`、`chrome_options=` 等)。想用 Selenium 4 见下文"已知问题"。
+
+### 3. 准备 WebDriver
+
+把浏览器对应的 `chromedriver.exe` / `geckodriver.exe` 等放到 `ui-test/resource/driver/` 目录下,
+`config.ini` 里已经写好了各驱动的相对路径,无需修改(注意:仓库里不包含驱动二进制,需自行下载)。
+
+### 4. 配置 `config.ini`
+
+打开 `ui-test/resource/config/config.ini`,根据需要改:
+
+| 段 | 关键字段 | 说明 |
+|---|---|---|
+| `[project]` | `driver` | `chrome` / `firefox` / `ie` / `edge` / `opera` / `safari` |
+| `[project]` | `redis_enable` | `Y` 启用,`N` 关闭(需先有 redis 服务) |
+| `[project]` | `mysql_enable` | `Y` 启用,`N` 关闭(需先有 mysql 服务) |
+| `[project]` | `env` / `lan` | 透传给 `@paramunittest` 的参数 |
+| `[redis]` | `redis_ip` / `redis_port` / `redis_pwd` | 连接信息 |
+| `[mysql]` | `mysql_*` | MySQL 连接信息 |
+| `[html]` | `cover_allowed` | `Y` 覆盖同名报告,`N` 自动加 `(2)` `(3)` |
+| `[log]` | `terminal_level` / `file_level` | 日志输出级别 |
+
+### 5. 运行
+
+```bash
+# 单线程跑全部用例
+cd ui-test
+python suite/run_all.py
+
+# 多线程(3 线程,实验性,报告会被覆盖)
+python suite/run_all_mutithread.py
+
+# 单独跑一个用例模块
+python case/test_baidu_case.py
+```
+
+报告输出在 `ui-test/report/html/UI测试报告.html`,日志在 `ui-test/report/log/`,
+截图在 `ui-test/report/img/`(失败时自动截图)。
+
+---
+
+## 已知问题与修复记录
+
+### 2026-06 修复(commit `2ccfa47`)
+
+| 问题 | 文件 | 修复 |
+|---|---|---|
+| 窗口句柄切换抛 `TypeError` | `common/browser_common.py` | `get_window_handle` → `get_window_handle()`(之前传的是方法对象本身) |
+| `@classmethod` 误用导致多个 case 共享同一个 `assembler`(类属性) | `case/test_csdn_case.py` | 删除两个 `@classmethod` 装饰器 |
+| PyMySQL 1.0+ 已移除 `passwd=` 参数 | `util/mysql_tool.py` | `passwd=` → `password=` |
+| `requirements.txt` 是空文件 | `ui-test/requirements.txt` | 补全 6 个第三方依赖 |
+| `.gitignore` 缺少 Python 标准忽略项 | `.gitignore` | 加 `__pycache__/` `*.pyc` 等 |
+
+### 仍然存在的问题(未修)
+
+- **Selenium 3 锁定**:`assembler.py` 用的是 `find_element_by_xpath()` `chrome_options=` 等 Selenium 3 API,
+  升 4.x 会立刻 `TypeError`。迁移需要改 5 处代码。
+- **多线程报告被覆盖**:`run_all_mutithread.py` 启了 3 线程,但所有线程用同一个 `report_name`,
+  报告互相覆盖。作者在注释里自己标注了:"需要对 BeautifulReport 进行二次开发才可以解决"。
+- **路径硬编码**:`assembler.py` `log_tool.py` `config_reader.py` 等多处用
+  `os.path.abspath(...).find("python-ui-auto-test")` 来定位项目根,
+  一旦目录改名或放深层位置就会失败。推荐改用 `Path(__file__).resolve().parent`。
+- **`config.ini` 中 `home_page` 字段未被任何代码读取**(死字段)。
+- **`redis_pool.py:54`** `disconnect()` 不会真正关闭 socket,只是把连接放回池子。
+
+### 推荐的升级路径
+
+1. 把路径定位全改成 `pathlib` 写法
+2. 升级到 Selenium 4 风格(`By.XPATH` + `options=...`)
+3. 把 `mysql_tool.py` 加 `with` 上下文管理(目前 `release_mysql_conn` 不会自动调用)
+4. 加 `pytest` 兼容层,逐步替换 `unittest`
+
+---
+
 ## 写在后头
 
 项目仍有许多值得修改优化的地方，望 commit 宝贵意见，更好完善框架内容！
