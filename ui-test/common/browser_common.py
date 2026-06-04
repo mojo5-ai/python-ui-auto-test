@@ -73,7 +73,7 @@ class BrowserCommon(object):
             pass
         elif len(window_handles) == 2:
             # 获取另一个窗口句柄
-            the_other_handle = window_handles[1 - window_handles.index(self.get_window_handle)]
+            the_other_handle = window_handles[1 - window_handles.index(self.get_window_handle())]
             # 切换句柄
             self.driver.switch_to.window(the_other_handle)
         else:

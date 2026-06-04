@@ -1,0 +1,22 @@
+# python-ui-auto-test dependencies
+# Tested on Python 3.11
+# Install: pip install -r requirements.txt
+
+# Web automation (项目代码用的是 Selenium 3 风格的 find_element_by_xpath,
+# 在 Selenium 4.x 上需要迁移 — 详见 README "已知问题" 章节)
+selenium>=3.141.0,<4.0.0
+
+# HTML test report
+BeautifulReport>=0.1.3
+
+# Parameterized unittest
+paramunittest>=0.2
+
+# Multithread decorator (for run_all_mutithread.py)
+tomorrow>=0.2.0
+
+# MySQL client
+pymysql>=1.0.2
+
+# Redis client
+redis>=3.5.0,<5.0.0
