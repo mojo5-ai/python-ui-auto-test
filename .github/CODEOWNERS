@@ -1,0 +1,20 @@
+# Code owners — 谁来 review 哪个文件
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# 这里只配了默认 owner。改成你的 GitHub username 可以让 PR 自动指派。
+
+# Default owners for everything
+# @your-github-username
+
+# UI 测试代码需要 selenium 经验
+/ui-test/case/        @your-github-username
+/ui-test/page/        @your-github-username
+/ui-test/common/      @your-github-username
+
+# 框架核心 (config / log / driver) 改动影响大
+/ui-test/base/        @your-github-username
+/ui-test/util/        @your-github-username
+/ui-test/resource/    @your-github-username
+
+# CI 改动需要 infra 经验
+/.github/             @your-github-username

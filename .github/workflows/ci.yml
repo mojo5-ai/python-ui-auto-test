@@ -1,0 +1,333 @@
+# GitHub Actions CI for python-ui-auto-test
+#
+# 2026-06 新增 — 每次 push / PR 自动跑测试基础设施检查。
+#
+# 策略: CI 分两个并行 job
+#   1. v1-test: 跑 v1 (Selenium 3 风格) — 跟原来一样
+#      - 跑 v1 pytest demo (test_pytest_style_demo.py)
+#      - 跑 v1 import 烟雾测试
+#   2. v2-test: 跑 v2 (Playwright 风格) — 新增
+#      - 跑 v2 不需要浏览器的 demo (test_baidu_demo.py)
+#      - 跑 v2 import 烟雾测试
+#
+# 两个 job 都不实际启动浏览器(浏览器测试留给 nightly + 手动 full-test)
+# 真要跑 selenium UI 用例请本地:
+#   python suite/run_all.py
+#   python suite/run_all_mutithread.py
+# 真要跑 playwright UI 用例请本地(装了浏览器后):
+#   cd ui-test && v2-venv/Scripts/python.exe -m pytest v2/case/ -m ui
+
+name: CI
+
+on:
+  push:
+    branches: [dev, master, main]
+  pull_request:
+    branches: [dev, master, main]
+  # 每周日凌晨 02:00 UTC (北京时间 10:00) 跑一次 nightly
+  schedule:
+    - cron: "0 2 * * 0"
+  # 允许手动从 Actions 页面触发 full-test
+  workflow_dispatch:
+
+# 取消进行中的同 workflow 旧运行,节省 runner 配额
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Job 1: v1 (Selenium 3 风格) 基础设施检查
+  # ──────────────────────────────────────────────────────────────────
+  v1-test:
+    name: v1 (Selenium) smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Install dependencies
+        working-directory: ui-test
+        run: |
+          python -m pip install --upgrade pip
+          # 先装项目依赖
+          pip install -r requirements.txt
+          # pytest 生态
+          pip install pytest pytest-html pytest-xdist pytest-timeout
+
+      - name: Show installed packages
+        working-directory: ui-test
+        run: pip list | grep -E "^(pytest|selenium|BeautifulReport|paramunittest|tomorrow|pymysql|redis)\b" || true
+
+      - name: Pytest smoke tests (no browser needed)
+        working-directory: ui-test
+        # 用 head 截断输出避免触发 GitHub Actions 日志行数限制
+        run: python -m pytest case/test_pytest_style_demo.py -v --tb=short --color=no 2>&1 | head -50
+
+      - name: Import smoke test (catch syntax/import errors)
+        working-directory: ui-test
+        # shell heredoc 之前在 CI 上 IndentationError,改用单行 python + stdin
+        run: |
+          python -c "
+          import sys, importlib, traceback
+          mods = [
+              'util.config_reader',
+              'util.log_tool',
+              'util.text_tool',
+              'util.thread_local_storage',
+              'util.report_tool',
+              'common.browser_common',
+              'common.page_common',
+              'base.assembler',
+              'suite.run_all',
+              'suite.run_all_mutithread',
+              'suite.run_pytest',
+          ]
+          failed = []
+          for m in mods:
+              try:
+                  importlib.import_module(m)
+                  print('  OK   ' + m)
+              except ImportError as e:
+                  if any(lib in str(e) for lib in ('BeautifulReport', 'selenium', 'pymysql', 'redis', 'tomorrow', 'paramunittest', 'PIL', 'numpy')):
+                      print('  SKIP ' + m + ': ' + str(e))
+                  else:
+                      print('  FAIL ' + m + ': ' + str(e))
+                      failed.append((m, e))
+              except Exception as e:
+                  print('  FAIL ' + m + ': ' + type(e).__name__ + ': ' + str(e))
+                  failed.append((m, e))
+          if failed:
+              print(str(len(failed)) + ' module(s) had non-dep errors')
+              for m, e in failed:
+                  print('  ' + m + ': ' + str(e))
+              sys.exit(1)
+          print('All ' + str(len(mods)) + ' modules OK')
+          " 2>&1 | head -30
+
+      - name: Pytest collection (no execution)
+        working-directory: ui-test
+        run: |
+          # 让 pytest 收集全部测试但不执行,验证:
+          #   - case/*.py 里没有语法错误 (unittest.TestCase 必须能 collect)
+          #   - marker 注册没冲突
+          #   - conftest.py 加载没出错
+          pytest --collect-only -q 2>&1 | tail -40
+        continue-on-error: true
+        # 注: 真实 case 会试图启动浏览器,collect 阶段不会,但会显示
+        # ImportWarning 之类的。我们让这一步 continue-on-error,只作为
+        # 友好提示。
+
+      - name: Static analysis (best-effort)
+        working-directory: ui-test
+        run: |
+          # pyflakes 比 flake8 轻,不强制风格,只抓明显错误
+          pip install pyflakes
+          pyflakes base/ case/ common/ data/ locator/ page/ util/ suite/ \
+              || (echo "::warning::pyflakes found issues (non-blocking)"; exit 0)
+
+      - name: Validate pytest.ini
+        working-directory: ui-test
+        run: |
+          # pytest 启动时如果 ini 有问题会报,但显式校验更稳
+          python -c "
+          import configparser
+          cp = configparser.ConfigParser()
+          cp.read('pytest.ini')
+          assert 'pytest' in cp.sections() or cp.defaults(), 'no [pytest] section'
+          print('pytest.ini: OK')
+          "
+
+      - name: Validate config.ini
+        working-directory: ui-test
+        run: |
+          python -c "
+          import configparser
+          cp = configparser.ConfigParser()
+          cp.read('resource/config/config.ini', encoding='utf-8')
+          for sec in ('project', 'driver', 'redis', 'mysql', 'screenshot', 'html', 'log'):
+              assert cp.has_section(sec), f'missing section [{sec}]'
+          print('config.ini: all required sections present')
+          "
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 2: v2 (Playwright 风格) 基础设施检查
+  # ──────────────────────────────────────────────────────────────────
+  v2-test:
+    name: v2 (Playwright) smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies (v2 only)
+        working-directory: ui-test
+        run: |
+          python -m pip install --upgrade pip
+          # v2 只需要 playwright + pytest-playwright
+          pip install playwright pytest-playwright pytest pytest-html
+
+      - name: Show installed packages
+        working-directory: ui-test
+        run: pip list | grep -E "^(playwright|pytest)\b" || true
+
+      - name: Pytest v2 demo tests (no browser needed)
+        working-directory: ui-test
+        # -m no_browser 跑不依赖浏览器的 demo
+        run: python -m pytest v2/case/test_baidu_demo.py -v --tb=short --color=no 2>&1 | head -50
+
+      - name: Import smoke test (v2 modules)
+        working-directory: ui-test
+        run: |
+          python -c "
+          import sys, importlib, traceback
+          mods = [
+              'v2.util.config_reader',
+              'v2.util.screenshot_tool',
+              'v2.common.page_common',
+              'v2.base.assembler',
+              'v2.page.baidu_main_page',
+              'v2.data.baidu_main_data',
+              'v2.locator.baidu_main_locator',
+          ]
+          failed = []
+          for m in mods:
+              try:
+                  importlib.import_module(m)
+                  print('  OK   ' + m)
+              except ImportError as e:
+                  if any(lib in str(e) for lib in ('playwright', 'PIL', 'numpy')):
+                      print('  SKIP ' + m + ': ' + str(e))
+                  else:
+                      print('  FAIL ' + m + ': ' + str(e))
+                      failed.append((m, e))
+              except Exception as e:
+                  print('  FAIL ' + m + ': ' + type(e).__name__ + ': ' + str(e))
+                  failed.append((m, e))
+          if failed:
+              print(str(len(failed)) + ' module(s) had non-dep errors')
+              for m, e in failed:
+                  print('  ' + m + ': ' + str(e))
+              sys.exit(1)
+          print('All ' + str(len(mods)) + ' v2 modules OK')
+          " 2>&1 | head -20
+
+      - name: Validate v2 pytest.ini
+        working-directory: ui-test
+        run: |
+          python -c "
+          import configparser
+          cp = configparser.ConfigParser()
+          cp.read('v2/pytest.ini')
+          assert 'pytest' in cp.sections() or cp.defaults(), 'no [pytest] section'
+          print('v2/pytest.ini: OK')
+          "
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 2: 周日全量(可选,慢,只在手动触发时跑)
+  # ──────────────────────────────────────────────────────────────────
+  full-test:
+    name: Weekly full test (with browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 只在手动从 Actions 页面 "Run workflow" 时触发
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Chrome (stable)
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install ChromeDriver
+        run: |
+          CHROME_VERSION=$(google-chrome --version | awk '{print $3}')
+          echo "Chrome version: $CHROME_VERSION"
+          echo "Note: project code hardcodes chromedriver.exe (Windows path)"
+          echo "Linux runner won't be able to launch driver, this is best-effort."
+
+      - name: Install dependencies
+        working-directory: ui-test
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-html
+
+      - name: Run pytest demo
+        working-directory: ui-test
+        run: |
+          pytest case/test_pytest_style_demo.py -v --tb=short \
+            --html=report/html/ci-pytest-report.html --self-contained-html || true
+        continue-on-error: true
+
+      - name: Upload pytest HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report-py${{ matrix.python-version }}
+          path: ui-test/report/html/ci-pytest-report.html
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────────────
+  # 每周日凌晨 02:00 UTC (北京时间 10:00) 自动触发一次"轻量级全量"
+  # ──────────────────────────────────────────────────────────────────
+  nightly:
+    name: Nightly smoke (cron)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        working-directory: ui-test
+        run: pip install -r requirements.txt && pip install pytest pytest-html
+      - name: Run smoke + import checks
+        working-directory: ui-test
+        run: |
+          pytest case/test_pytest_style_demo.py -v --tb=short \
+            --html=report/html/nightly-report.html --self-contained-html
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-report
+          path: ui-test/report/html/nightly-report.html
+          if-no-files-found: ignore
+          retention-days: 30

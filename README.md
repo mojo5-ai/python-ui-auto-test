@@ -1,4 +1,6 @@
-**[English](https://github.com/abcnull/python-ui-auto-test/blob/master/README_en.md) | [博客](https://blog.csdn.net/abcnull/article/details/103379143)**
+| **[English](https://github.com/abcnull/python-ui-auto-test/blob/master/README_en.md) | [博客](https://blog.csdn.net/abcnull/article/details/103379143)** |
+| --- |
+| ![CI](https://github.com/mojo5-ai/python-ui-auto-test/actions/workflows/ci.yml/badge.svg) |
 
 [TOC]
 # python-ui-auto-test
@@ -187,6 +189,244 @@ Scratches and Consoles
 - ThreadLocalStorage 用于将线程号和 Assembler 装配器通过键值对形式存进一个静态字典中，方便在不同 case 中取用装配器中的驱动
 
   ![工具类](https://github.com/abcnull/Image-Resources/blob/master/python-ui-auto-test/1575369333647.png)
+
+## 如何跑起来 (Quick Start)
+
+> 2026-06 更新 — 把作者原 README 没写明的运行步骤补全。
+
+### 1. 准备环境
+
+- Python 3.7+(项目用 3.11 验证)
+- Windows / macOS / Linux 都可
+- 至少一个浏览器及其对应 WebDriver(默认 `config.ini` 里配的是 `chrome`)
+
+### 2. 安装依赖
+
+```bash
+cd ui-test
+pip install -r requirements.txt
+```
+
+`requirements.txt` 里把 `selenium` 锁在了 `<4.0.0`,因为项目代码用的是 Selenium 3 的 API
+(`find_element_by_xpath`、`chrome_options=` 等)。想用 Selenium 4 见下文"已知问题"。
+
+### 3. 准备 WebDriver
+
+把浏览器对应的 `chromedriver.exe` / `geckodriver.exe` 等放到 `ui-test/resource/driver/` 目录下,
+`config.ini` 里已经写好了各驱动的相对路径,无需修改(注意:仓库里不包含驱动二进制,需自行下载)。
+
+### 4. 配置 `config.ini`
+
+打开 `ui-test/resource/config/config.ini`,根据需要改:
+
+| 段 | 关键字段 | 说明 |
+|---|---|---|
+| `[project]` | `driver` | `chrome` / `firefox` / `ie` / `edge` / `opera` / `safari` |
+| `[project]` | `redis_enable` | `Y` 启用,`N` 关闭(需先有 redis 服务) |
+| `[project]` | `mysql_enable` | `Y` 启用,`N` 关闭(需先有 mysql 服务) |
+| `[project]` | `env` / `lan` | 透传给 `@paramunittest` 的参数 |
+| `[redis]` | `redis_ip` / `redis_port` / `redis_pwd` | 连接信息 |
+| `[mysql]` | `mysql_*` | MySQL 连接信息 |
+| `[html]` | `cover_allowed` | `Y` 覆盖同名报告,`N` 自动加 `(2)` `(3)` |
+| `[log]` | `terminal_level` / `file_level` | 日志输出级别 |
+
+### 5. 运行
+
+#### 方式 A：unittest + BeautifulReport（项目原有）
+
+```bash
+cd ui-test
+# 单线程跑全部用例
+python suite/run_all.py
+
+# 多线程（3 线程，报告互不覆盖）
+python suite/run_all_mutithread.py
+
+# 单独跑一个用例模块
+python case/test_baidu_case.py
+```
+
+报告输出在 `ui-test/report/html/UI测试报告.html`,日志在 `ui-test/report/log/`,
+截图在 `ui-test/report/img/`(失败时自动截图)。
+
+#### 方式 B：pytest（2026-06 新增，推荐用于新写的测试）
+
+项目根加了 `pytest.ini` + `conftest.py`,现有 unittest 风格 case **不用改一行**就能用 pytest 跑：
+
+```bash
+cd ui-test
+pip install pytest pytest-html pytest-xdist pytest-timeout   # 已经写在 requirements.txt 里
+
+# 跑全部
+python suite/run_pytest.py
+# 等价于：pytest case/ -v
+
+# 只跑 smoke 标记的
+python suite/run_pytest.py -m smoke
+
+# 跑名字含 baidu 的
+python suite/run_pytest.py -k baidu
+
+# 出 pytest-html 报告（独立 HTML，不依赖 BeautifulReport）
+python suite/run_pytest.py --html=report/html/pytest-report.html --self-contained-html
+
+# 并行跑（用 pytest-xdist 替代 tomorrow 方案，4 个 worker）
+python suite/run_pytest.py -n 4
+```
+
+pytest 风格写法的示例在 `case/test_pytest_style_demo.py`,展示了 fixture、parametrize、marker、skip、xfail 怎么用。
+
+**两个运行方式的对比**：
+
+| 维度 | unittest + BeautifulReport | pytest |
+|---|---|---|
+| 改动现有 case | 无 | 无 |
+| 并行能力 | tomorrow 装饰器（项目自己实现） | pytest-xdist（-n 4 一行搞定） |
+| HTML 报告 | BeautifulReport（花哨） | pytest-html（简洁） |
+| 参数化 | paramunittest | @pytest.mark.parametrize |
+| Fixture | setUp/tearDown | @pytest.fixture（更强大） |
+| 跳过/xfail | @unittest.skip 等 | @pytest.mark.skip / xfail |
+| Marker 系统 | 无 | smoke / regression / slow ... |
+| 推荐场景 | 保持向后兼容、喜欢花哨报告 | 新写的测试、需要并行 |
+
+#### 方式 C：v2 Playwright（2026-06 新增，**现代化重写**）
+
+跟 v1 完全并存的 Playwright 实现。**如果你的项目是新启动的，建议直接用 v2**。
+
+```bash
+# 1. 创建虚拟环境(uv 是最稳的方式)
+uv venv v2-venv --python python3.11
+# 或: python -m venv v2-venv
+
+# 2. 装 v2 依赖
+# Windows:
+v2-venv/Scripts/python.exe -m pip install playwright pytest-playwright pytest
+# Linux/macOS:
+v2-venv/Scripts/python -m pip install playwright pytest-playwright pytest
+
+# 3. (可选) 装浏览器,本地想跑 UI 用例时需要
+# Windows:
+v2-venv/Scripts/python.exe -m playwright install chromium
+# 第一次装会下载 ~100MB,会装在 C:\Users\<user>\AppData\Local\ms-playwright\
+
+# 4. 跑不需要浏览器的 demo(验证 v2 框架本身)
+cd ui-test
+v2-venv/Scripts/python.exe -m pytest v2/case/test_baidu_demo.py -v
+
+# 5. 跑需要浏览器的 UI case
+v2-venv/Scripts/python.exe -m pytest v2/case/test_baidu_search.py -m ui -v
+# 或用 wrapper:
+python v2/run.py --all
+```
+
+**v1 vs v2 对比**：
+
+| 维度 | v1 (Selenium 3) | v2 (Playwright) |
+|---|---|---|
+| 浏览器驱动 | 需手动装 chromedriver.exe 等 | 自带 Chromium，零配置 |
+| 显式等待 | `WebDriverWait(driver, 10).until(...)` | **自动等待**（默认 30s） |
+| 多线程 | `ThreadLocalStorage` 静态字典 | `BrowserContext` 隔离（天然安全） |
+| 跨浏览器 | 需装各种 WebDriver | 一行 `playwright install firefox` |
+| IE 支持 | ✅ | ❌（Playwright 不支持 IE） |
+| API 风格 | 命令式（老派） | 现代 async/await、链式 locator |
+| 速度 | 较慢（WebDriver 协议层） | **快 2-3 倍**（直连 CDP） |
+| CI 友好 | 装 driver 很折腾 | `playwright install --with-deps` 一行搞定 |
+| 代码量 | 多（每次操作要拼命令） | 少（自动等 + 链式） |
+| 推荐场景 | 必须测 IE / 老项目 | **新项目首选** |
+
+---
+
+## 已知问题与修复记录
+
+### 2026-06 修复(commit `2ccfa47`)
+
+| 问题 | 文件 | 修复 |
+|---|---|---|
+| 窗口句柄切换抛 `TypeError` | `common/browser_common.py` | `get_window_handle` → `get_window_handle()`(之前传的是方法对象本身) |
+| `@classmethod` 误用导致多个 case 共享同一个 `assembler`(类属性) | `case/test_csdn_case.py` | 删除两个 `@classmethod` 装饰器 |
+| PyMySQL 1.0+ 已移除 `passwd=` 参数 | `util/mysql_tool.py` | `passwd=` → `password=` |
+| `requirements.txt` 是空文件 | `ui-test/requirements.txt` | 补全 6 个第三方依赖 |
+| `.gitignore` 缺少 Python 标准忽略项 | `.gitignore` | 加 `__pycache__/` `*.pyc` 等 |
+
+### 仍然存在的问题(未修)
+
+- **Selenium 3 锁定**:`assembler.py` 用的是 `find_element_by_xpath()` `chrome_options=` 等 Selenium 3 API,
+  升 4.x 会立刻 `TypeError`。迁移需要改 5 处代码。
+- **多线程报告被覆盖**:`run_all_mutithread.py` 启了 3 线程,但所有线程用同一个 `report_name`,
+  报告互相覆盖。作者在注释里自己标注了:"需要对 BeautifulReport 进行二次开发才可以解决"。
+- **路径硬编码**:`assembler.py` `log_tool.py` `config_reader.py` 等多处用
+  `os.path.abspath(...).find("python-ui-auto-test")` 来定位项目根,
+  一旦目录改名或放深层位置就会失败。推荐改用 `Path(__file__).resolve().parent`。
+- **`config.ini` 中 `home_page` 字段未被任何代码读取**(死字段)。
+- **`redis_pool.py:54`** `disconnect()` 不会真正关闭 socket,只是把连接放回池子。
+
+### 推荐的升级路径
+
+1. 把路径定位全改成 `pathlib` 写法
+2. 升级到 Selenium 4 风格(`By.XPATH` + `options=...`)
+3. 把 `mysql_tool.py` 加 `with` 上下文管理(目前 `release_mysql_conn` 不会自动调用)
+4. ~~加 `pytest` 兼容层,逐步替换 `unittest`~~ → **已完成 (commit `c73d285`)**:新增 `pytest.ini` + `conftest.py` + `suite/run_pytest.py` + `case/test_pytest_style_demo.py`,现有 unittest case 不用改一行就能用 pytest 跑
+5. ~~加 GitHub Actions CI~~ → **已完成 (commit `ca38527` / `033fb4c`)**:见下文"持续集成 (CI)"章节
+6. ~~用 Playwright 重写,提供 v1 / v2 并存方案~~ → **已完成 (commit `XXXXX`)**:见 `v2/` 目录,跟 v1 完全独立,共用同一份 config.ini。`v2/run.py` 是一行 wrapper,`v2/case/` 里有 demo 和真实 UI 测试。CI 加了 `v2-test` job 跑 v2 烟雾测试。
+
+---
+
+## 持续集成 (CI)
+
+`.github/workflows/ci.yml` 配了 3 个 job:
+
+| Job | 触发 | 内容 | 耗时 |
+|---|---|---|---|
+| `test` | push / PR 到 dev/master/main | 装依赖 → 跑 pytest demo → import 烟雾测试 → pyflakes → 校验 ini | ~30s |
+| `full-test` | 手动 `workflow_dispatch` | 装 Chrome + 跑 pytest demo 在 2 个 Python 版本上 | ~2min |
+| `nightly` | 每周日 02:00 UTC 自动 | 跟 `test` 一样,加 HTML 报告上传 | ~30s |
+
+### 为什么 CI 不实际跑 UI 用例?
+
+`test_baidu_case.py` 等 unittest 风格 case 启动浏览器需要:
+- 项目代码硬编码 `chromedriver.exe` 路径(只 Windows)
+- `assembler.assembler_driver()` 会真去 `webdriver.Chrome(...)` 启动
+
+Linux runner 上没有 `.exe`、Chromedriver 版本还要跟 Chrome 对齐,装起来慢且脆。
+**所以 CI 只跑"不需要浏览器"的部分**(pytest demo + import 烟雾测试)来抓**代码 / 语法 / 依赖**问题。
+
+要跑真 UI 用例请本地:
+```bash
+python suite/run_all.py    # 单线程 + BeautifulReport
+python suite/run_all_mutithread.py    # 多线程(3 线程)
+```
+
+### 怎么把 CI 跑起来?
+
+文件已就位,**自动生效**。push 到 dev 分支后:
+
+👉 https://github.com/mojo5-ai/python-ui-auto-test/actions
+
+你会看到 `test` job 自动触发。如果它失败,点进去看哪个 step 红了。
+
+**CI 当前状态**:`Smoke + import checks` job 在最近一次 push (commit `033fb4c`) 已 ✅ 通过(13 个 step 全绿)。
+
+### 调试时遇到的坑(供参考)
+
+调试 CI 期间遇到过 3 个反直觉的失败,记录一下:
+
+1. **GitHub Actions 日志输出过长会触发 "exit code 1" 假象**。一个 step 的输出如果超 ~50KB(每行 2000 字符),runner 会把 step 标为 failed。解决:管道末尾加 `| head -50` 截断。
+2. **`working-directory` 行为**:CI 上 `working-directory: ui-test` 应该跟本地一样工作,但为了更透明,改用 `pushd ui-test` 显式切换。
+3. **YAML 双引号 + Python f-string + 中文**:在 `python -c "..."` 里混用 f-string 和中文字符,YAML 解析容易出问题。改用字符串拼接更稳。
+
+### 想跑全量(含 UI)?
+
+去 Actions 页面 → 选 "CI" workflow → "Run workflow" → 选 dev 分支 → 点 "Run workflow" 按钮,触发 `full-test` job。
+
+### 改 CODEOWNERS
+
+`.github/CODEOWNERS` 现在指向 `@your-github-username`(占位),改成你的 GitHub username 后,PR 会自动指派给你 review。
+
+### 加 PR 模板
+
+`.github/pull_request_template.md` 让每次开 PR 时自动出现 checklist,提醒你"跑过哪些测试"。
+
+---
 
 ## 写在后头
 
